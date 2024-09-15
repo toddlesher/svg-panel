@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+#
+# Installs or updates any python pre-requisites:
+#
+# * installs/updates poetry
+# * initializes or updates virtualenv in .venv
+#
+# By default, it only installs packages that are needed for running various
+# servers or scripts.
+#
+# To install development dependencies, run "./bootstrap --dev".
+
+set -o errexit
+set -o pipefail
+
+POETRY_VERSION=1.8.3
+DEV_MARKER_FILE=".dev"
+
+# Whether to install development dependencies.
+DEV=0
+
+function setup_poetry() {
+  # Work around https://github.com/python-poetry/poetry/issues/1917
+  export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+
+  if command -v poetry >/dev/null; then
+    echo "Updating poetry..."
+    poetry self update "$POETRY_VERSION"
+  else
+    echo "Installing poetry..."
+    curl -sSL https://install.python-poetry.org | python3 - --version "$POETRY_VERSION"
+    # If the path wasn't in user's profile before, we'll fail the "poetry"
+    # calls below. With this, we can finish bootstrapping.
+    PATH="$HOME/.local/bin:$PATH"
+  fi
+}
+
+function setup_venv() {
+  if [ $DEV -eq 1 ]; then
+    poetry install
+  else
+    # only install runtime dependencies
+    poetry install --only main
+  fi
+}
+
+function setup_precommit() {
+  if [ $DEV -ne 1 ]; then
+    # pre-commit is only needed for development.
+    return
+  fi
+  poetry run pre-commit install -t pre-push
+}
+
+function parse_args() {
+  if [ -f "$DEV_MARKER_FILE" ]; then
+    echo "$DEV_MARKER_FILE file found, installing development dependencies..."
+    DEV=1
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --dev)
+        DEV=1
+        # Remember the flag for next invocation.
+        touch "$DEV_MARKER_FILE"
+        shift
+        ;;
+      *)
+        echo "Unknown argument: $1"
+        exit 1
+        ;;
+    esac
+  done
+}
+
+function main() {
+  parse_args "$@"
+  setup_poetry
+  setup_venv
+  setup_precommit
+}
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+main "$@"
